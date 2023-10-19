@@ -1,46 +1,17 @@
 #! /usr/bin/env python
 import sys, os
-import shutil
-import subprocess
+import argparse
 from datetime import datetime
 import time as timeit
 import pickle
 import glob
 import copy
 import numpy as np
-import scipy.stats as stats
-import scipy.optimize as optimize
-from scipy.signal import argrelmin
-from scipy.integrate import simps
-from scipy.spatial import Voronoi, Delaunay, ConvexHull
-from sklearn.decomposition import PCA
 import pytraj as pt
 import parmed as pmd
-from pymbar import mbar
-import water_properties as wp
 
-import surface_library as sl
+Usage = "This class imports a simulation trajectory and uses parmed and pytraj to extract common atomic sub-indices."
 
-# testing sortlib and waterlib versions in "ProteinDev" project 
-sys.path.append('/home/drobins/ProteinDev/fortran')
-import sortlib
-import waterlib as wl
-
-# only need this for python2, update when I get this framework functional on python3 
-import matplotlib
-try:
-  os.environ["DISPLAY"]
-except KeyError:
-  shsowPlots = False
-  matplotlib.use('Agg')
-
-import matplotlib.pyplot as plt
-
-
-Usage = """A library of classes and functions to compute the system-average and local order parameters for water structure.
-"""
-
-### I think this is all I can use the TrajObject class for without making things overly complex, but it may be useful to implement additional classes to deal with the finer details...
 class TrajObject:
   """A class to manage trajectory information more compactly than implementing parmed and pytraj each time.
      Attributes:
@@ -51,28 +22,23 @@ class TrajObject:
                  watResName - string defining the residue name for the water. Default='(:WAT)'
   """
   def __init__(self, topFile, trajFile=None, stride=1, solResName='(!:WAT)', watResName='(:WAT)'):
-    self.topFile = topFile
-    self.trajFile = trajFile
-    self.stride = stride
-    self.solResName = solResName
-    self.watResName = watResName
-    self.top = pmd.load_file(topFile)
+    self.topFile = topFile # define topology file string
+    self.trajFile = trajFile # define trajectory file string
+    self.stride = stride # define trajectory sampling frequency
+    self.solResName = solResName # define cpptraj mask for solute atoms
+    self.watResName = watResName # define cpptraj mask for water atoms
+    self.top = pmd.load_file(topFile) # parmed load topology
+    # pytraj load trajectory
     if trajFile is not None:
       self.traj = pt.iterload(trajFile, pt.load_parmed(self.top, traj=False) ,stride=stride)
 
   def getWatInds(self):
-    """Given the above functions and __init__, we can extract the oxygen and hydrogen indice of water molecules
-       Inputs:                                                                                                      
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
+    """This function extracts the oxygen and hydrogen indices of water molecules as defined by the residue masks (per cpptraj/pytraj).
        Outputs:
                watInds - contains the water oxygen indices (numpy array of ints)
                watHInds - contains the water hydrogen indices (numpy array of ints)
                lenWat - # of atoms in a water atom
     """
-    #traj = self.loadTraj()
-    #top = self.loadTop()
-
     traj = self.traj
     top = self.top
     
@@ -86,10 +52,7 @@ class TrajObject:
     return watInds, watHInds, lenWat
 
   def getHeavyInds(self):
-    """Given the above functions and __init__, we can extract the heavy atom indices
-       Inputs:                  
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
+    """This function extracts the heavy indices of the system as defined by the residue masks (per cpptraj/pytraj).
        Outputs:
                heavyInds - contains heavy indices (numpy array of ints)
     """
@@ -100,10 +63,7 @@ class TrajObject:
     return heavyInds
 
   def getPhobicInds(self):
-    """Given the above functions and __init__, we can extract the carbon and sulfur indices of all molecules
-       Inputs:                                                                                                      
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
+    """This function extracts the hydrophobic indices (C and S) of the system as defined by the residue masks (per cpptraj/pytraj).       
        Outputs:
                phobicInds - contains carbon and sulfur indices (numpy array of ints)
     """
@@ -113,10 +73,7 @@ class TrajObject:
     return phobicInds
 
   def getPhilicInds(self):
-    """Given the above functions and __init__, we can extract the nitrogen and oxygen indices of all molecules
-       Inputs:                                                                                                      
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
+    """This function extracts the hydrophilic indices (O and N) of the system as defined by the residue masks (per cpptraj/pytraj).       
        Outputs:
                philiicInds - contains oxygen and nitrogen indices (numpy array of ints)
     """
@@ -126,19 +83,14 @@ class TrajObject:
     return philicInds
 
   def getSolInds(self):
-    """Given the above functions and __init__, we can extract the heavy atom, hydrogen, carbon, nitrogen, and oxygen indice of non-water cosolvent molecules
-       Inputs:                                                                                                      
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
+    """This function extracts co-solvent (non-water) indices of the system as defined by the residue masks (per cpptraj/pytraj).       
        Outputs:
                solInds - contains the cosolvent heavy atom indices (numpy array of ints)
                solHInds - contains the solute hydrogen indices (numpy array of ints)
                solCInds - contains the solute carbon indices (numpy array of ints)
                solNInds - contains the solute nitrogen indices (numpy array of ints)
                solOInds - contains the solute oxygen indices (numpy array of ints)
-
                solSInds - contains the solute sulfur indices (numpy array of ints)
-
     """
     traj = self.traj
     top = self.top
