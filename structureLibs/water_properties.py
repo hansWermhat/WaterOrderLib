@@ -1,31 +1,48 @@
-#A library of code to examine properties of bulk water and near solutes
-#
-#Should eventually be able to handle local densities and fluctuations,
-#solute-water and water-water energies, 3-body angles, hydrogen bonds,
-#energy densities, and all of this as a function of space. Additionally,
-#should also be able to compute interfaces, such as Willard-Chandler
-#instantaneous interface, or vdW surface, SASA and volume of solute.
-#
-#Will work with pytraj interface for trajectory analysis, since this
-#should later allow easier energy decomposition?
-#If doesn't work out, will go back to sim package with netcdf plugin.
-#
-#Also, should have test script and some test system where know answers
-#
-
+#! /usr/bin/env python                                
 import sys, os
+import glob
+import subprocess
+from platform import python_version
 import numpy as np
 import scipy.optimize as optimize
 from scipy.special import sph_harm
 
-#import waterlib_3 as wl
-# testing sortlib and waterlib versions in "ProteinDev" project                                           
-sys.path.append('/home/drobins/ProteinDev/fortran')                                                       
-import sortlib                                                                                            
+Usage = 'A library of code to examine properties of bulk water and near solutes'
+
+# check if wrapper version is consistent with current python version
+pyVersion = python_version().split('.')[0] + python_version().split('.')[1]
+
+os.chdir('../fortran') # change to fortran directory
+libFileName = glob.glob('*.so')
+
+# First check that there are wrappers for each function. If not, run subproc.
+#if len(libFileName)<=3:
+#  print('Writing fortran wrappers...')
+#  for f in libFileName:
+#    os.remove(f)
+#  subprocess.run(['bash buildWrappers.sh'], shell=True)
+
+# Then check that each wrapper uses the same python 3.X version. If not, run subproc.
+nWrappers = 3 # change this parameter if I add more fortran scripts
+count = 0
+for f in libFileName:
+  if pyVersion in f:
+    count += 1
+print(count)
+
+if count<nWrappers:
+  print('Writing fortran wrappers...')
+
+  # check if there are existing fortran wrappers
+  subprocess.call(['bash buildWrappers.sh'], shell=True)
+else:
+  pass
+os.chdir('../structureLibs')
+
+sys.path.append('../fortran')       
 import waterlib as wl         
 
 #Define constants and unit conversions
-
 #conversion for surface tension
 kBJ = 1.38064852*(10**(-23))
 temp = 300.0
