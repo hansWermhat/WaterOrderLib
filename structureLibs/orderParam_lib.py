@@ -18,6 +18,9 @@ import pytraj as pt
 import parmed as pmd
 from pymbar import mbar
 import water_properties as wp
+from TrajObject import TrajObject
+
+from matplotlib.image import NonUniformImage
 
 import surface_library as sl
 
@@ -36,119 +39,8 @@ except KeyError:
 
 import matplotlib.pyplot as plt
 
-
-Usage = """A library of classes and functions to compute the system-average and local order parameters for water structure.
+Usage = """A library of functions to compute the system-average and local order parameters for water structure.
 """
-
-### I think this is all I can use the TrajObjects class for without making things overly complex, but it may be useful to implement additional classes to deal with the finer details...
-class TrajObjects:
-  """A class to manage trajectory information more compactly than implementing parmed and pytraj each time.
-     Attributes:
-                 topFile - topology file for this system
-                 trajFile - trajectory file for this system
-                 stride - skip every "stride" steps of the trajectory (int). Default=1
-                 solResName - string defining the residue name for the non-water cosolvent. Default='(!:WAT)'
-                 watResName - string defining the residue name for the water. Default='(:WAT)'
-  """
-  def __init__(self, topFile, trajFile=None, stride=1, solResName='(!:WAT)', watResName='(:WAT)'):
-    self.topFile = topFile
-    self.trajFile = trajFile
-    self.stride = stride
-    self.solResName = solResName
-    self.watResName = watResName
-    self.top = pmd.load_file(topFile)
-    if trajFile is not None:
-      self.traj = pt.iterload(trajFile, pt.load_parmed(self.top, traj=False) ,stride=stride)
-
-  def getWatInds(self):
-    """Given the above functions and __init__, we can extract the oxygen and hydrogen indice of water molecules
-       Inputs:                                                                                                      
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
-       Outputs:
-               watInds - contains the water oxygen indices (numpy array of ints)
-               watHInds - contains the water hydrogen indices (numpy array of ints)
-               lenWat - # of atoms in a water atom
-    """
-    #traj = self.loadTraj()
-    #top = self.loadTop()
-
-    traj = self.traj
-    top = self.top
-    
-    nWatAtoms = len(traj.top.select(self.watResName))
-    watInds = traj.top.select(self.watResName+'&(@O=)')
-    watHInds = traj.top.select(self.watResName+'&(@H=)')
-    if len(watInds)!=0:
-      lenWat = int(nWatAtoms/len(watInds))
-    else:
-      lenWat = 0
-    return watInds, watHInds, lenWat
-
-  def getHeavyInds(self):
-    """Given the above functions and __init__, we can extract the heavy atom indices
-       Inputs:                  
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
-       Outputs:
-               heavyInds - contains heavy indices (numpy array of ints)
-    """
-    traj = self.traj
-    top = self.top
-    # exclude virtual atoms and hydrogens
-    heavyInds = traj.top.select('(!@H=)&(!@EP=)')
-    return heavyInds
-
-  def getPhobicInds(self):
-    """Given the above functions and __init__, we can extract the carbon and sulfur indices of all molecules
-       Inputs:                                                                                                      
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
-       Outputs:
-               phobicInds - contains carbon and sulfur indices (numpy array of ints)
-    """
-    traj = self.traj
-    top = self.top
-    phobicInds = traj.top.select('(@C=)|(@S=)')
-    return phobicInds
-
-  def getPhilicInds(self):
-    """Given the above functions and __init__, we can extract the nitrogen and oxygen indices of all molecules
-       Inputs:                                                                                                      
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
-       Outputs:
-               philiicInds - contains oxygen and nitrogen indices (numpy array of ints)
-    """
-    traj = self.traj
-    top = self.top
-    philicInds = traj.top.select('(@O=)|(@N=)')
-    return philicInds
-
-  def getSolInds(self):
-    """Given the above functions and __init__, we can extract the heavy atom, hydrogen, carbon, nitrogen, and oxygen indice of non-water cosolvent molecules
-       Inputs:                                                                                                      
-               self - contains all necessary objects, in this case just the resnames and loading functions
-     
-       Outputs:
-               solInds - contains the cosolvent heavy atom indices (numpy array of ints)
-               solHInds - contains the solute hydrogen indices (numpy array of ints)
-               solCInds - contains the solute carbon indices (numpy array of ints)
-               solNInds - contains the solute nitrogen indices (numpy array of ints)
-               solOInds - contains the solute oxygen indices (numpy array of ints)
-
-               solSInds - contains the solute sulfur indices (numpy array of ints)
-
-    """
-    traj = self.traj
-    top = self.top
-    solInds = traj.top.select(self.solResName+'&(!@H=)')
-    solHInds = traj.top.select(self.solResName+'&(@H=)')
-    solCInds = traj.top.select(self.solResName+'&(@C=)')
-    solNInds = traj.top.select(self.solResName+'&(@N=)')
-    solOInds = traj.top.select(self.solResName+'&(@O=)')
-    solSInds = traj.top.select(self.solResName+'&(@S=)')
-    return solInds, solHInds, solCInds, solNInds, solOInds, solSInds
 
 ### Additional functionalities outside of the class
 def getHBInds(top, frame, solInds, solHInds, solNInds, solOInds):
@@ -263,8 +155,8 @@ def getClusters(hbMat):
       
   return clusters
 
-def getClusterStats(topFile, trajFile, acceptorInds, donorInds, donorHInds,
-                    stride=1):
+def getHBClusterStats(topFile, trajFile, acceptorInds, donorInds, donorHInds,
+                      stride=1, distCut = 3.0, angCut = 150.0):
   """Here, we extract a matrix of residue-residue HBs. This should work fairly generally,
   e.g., watInds=boundWatInds and solInds=(nonBoundWatInds & solInds) should produce an
   hbMat with dimension (nRes_bound, nRes-nRes_bound)
@@ -280,7 +172,7 @@ def getClusterStats(topFile, trajFile, acceptorInds, donorInds, donorHInds,
      Outputs:
             hbMat - (nRes,nRes)-array of HB contacts between residues
     """
-  obj = TrajObjects(topFile, trajFile=trajFile, stride=stride, solResName=None,
+  obj = TrajObject(topFile, trajFile=trajFile, stride=stride, solResName=None,
                     watResName=None)
   top = obj.top #loadTop()     
   traj = obj.traj
@@ -300,7 +192,7 @@ def getClusterStats(topFile, trajFile, acceptorInds, donorInds, donorHInds,
     # get all hbs
     allHB = wl.generalhbonds(acceptorPos,
                              donorPos, donorHPos,
-                             thisbox, 3.0, 150.0)
+                             thisbox, distCut, angCut)
     
     # create mapping from acceptor Ind to atom index
     acceptMap = [acceptorInds[i] for i in range(len(acceptorInds))]
@@ -344,6 +236,153 @@ def getClusterStats(topFile, trajFile, acceptorInds, donorInds, donorHInds,
   meanCluster = np.mean(clusters)
   return meanCluster
 
+def getIonClusterStats(topFile, trajFile, Inds, chargeAssign,
+                        stride=1, distCut = 3.4):
+  """Here, we extract a matrix of contacts for non-HB cluster evaluation.
+     Inputs:                                                               
+            topFile - topology name 
+            trajFile - trajectory name
+            Inds - list of atom indices            
+            chargeAssign - len(Inds) long list of ion charges
+            stride - skip every "stride" steps of the trajectory (int). 
+                     Default=1
+
+     Outputs:
+            hbMat - (nRes,nRes)-array of HB contacts between residues
+    """
+  obj = TrajObject(topFile, trajFile=trajFile, stride=stride, solResName=None,
+                    watResName=None)
+  top = obj.top #loadTop()     
+  traj = obj.traj
+
+  clusters = []
+  cations = []
+  
+  cationInds = [i for i in range(len(Inds)) if chargeAssign[i]>0]
+  anionInds = [i for i in range(len(Inds)) if chargeAssign[i]<0]
+
+  for t, frame in enumerate(traj):
+    # get box vectors and positions
+    thisbox = np.reshape(np.array(frame.box.values[:3]),(1,3))
+    thispos = np.array(frame.xyz)
+
+    # get positions
+    subPos = thispos[Inds]
+    
+    start = timeit.time()
+    # get all pairs
+    pairMat = wl.allnearneighbors(subPos, thisbox, 0.0, distCut)
+          
+    tClusters = getClusters(pairMat)
+    
+    # get charges of these clusters
+    tCharges = [ chargeAssign[cluster] for cluster in tClusters ]
+
+    # compute cluster size and charge
+    clusterSize = np.array( [ len(clust) for clust in tClusters ] )
+    clusterCharge = np.array( [ np.sum(charge) for charge in tCharges ] )  
+
+    # loop through clusters and assign effective charges for each cation based on which cluster they exist in
+    cationCharge = []
+    for i, zEff in enumerate(clusterCharge):
+      cluster = tClusters[i]
+      if any(x in cluster for x in cationInds):
+        cationCharge.append(zEff)
+      else:
+        continue
+
+    cations.append(np.array(cationCharge))
+    clusters.append(clusterSize)
+  
+  clusters = np.concatenate(clusters)
+  cations = np.concatenate(cations)
+  meanCluster = np.mean(clusters)
+  meanCharge = np.mean(cations)
+  
+  clusterDist, bins = np.histogram(clusters,
+                                   bins=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                                   density=False)
+
+  # save the file!                  
+  np.savetxt('clusterDistribution.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
+                                                  clusterDist],axis=1),
+             header='# clusters    frequency',fmt="%.3e")
+
+  return meanCluster
+
+def getNeighborStats(topFile, trajFile, Inds1, Inds2, nAtoms1, nAtoms2, 
+                     stride=1, distCut = 3.4, switch=False):
+  """Here, we extract a matrix of contacts for non-HB cluster evaluation.
+     Inputs:                                                               
+            topFile - topology name 
+            trajFile - trajectory name
+            Inds1 - list of atom indices 1 
+            Inds2 - list of atom indices 2
+            nAtoms1 - number of atoms in each molecule of type 1
+            nAtoms2 - number of atoms in each molecule of type 2
+            switch - logical expression that's True if Inds1 and Inds2 are the same
+            stride - skip every "stride" steps of the trajectory (int). 
+                     Default=1
+
+     Outputs:
+            meanNeighbors - average number of neighbors near the minority atom set
+    """
+  obj = TrajObject(topFile, trajFile=trajFile, stride=stride, solResName=None,
+                    watResName=None)
+  top = obj.top #loadTop()     
+  traj = obj.traj
+
+  numberCoord = [] # list to store the coordination environment in each timestep
+  for t, frame in enumerate(traj):
+    # get box vectors and positions
+    thisbox = np.reshape(np.array(frame.box.values[:3]),(1,3))
+    thispos = np.array(frame.xyz)
+
+    # get positions
+    subPos1 = thispos[Inds1]
+    subPos2 = thispos[Inds2]
+
+    if switch:
+      neighbors = wl.allnearneighbors(subPos1, thisbox, 0.0, distCut)
+      nRes = int(len(Inds1)/nAtoms1)      
+      resNumbers = np.zeros(nRes, dtype=int)
+      
+      for n in range(nRes):
+        nNeighbors = neighbors[int(n*nAtoms1):int((n+1)*nAtoms1), :]
+        nNeighbors[int(n*nAtoms1):int((n+1)*nAtoms1), 
+                   int(n*nAtoms1):int((n+1)*nAtoms1)] = 0
+        resNumbers[n] = len(np.unique(np.where(nNeighbors==1)[1]))
+
+      numberCoord.append(resNumbers)
+
+    else:
+      neighbors = wl.nearneighbors(subPos1, subPos2, thisbox, 0.0, distCut)
+      nRes1 = int(len(Inds1)/nAtoms1)
+      nRes2 = int(len(Inds2)/nAtoms2)
+      resNumbers = np.zeros(nRes1, dtype=int)
+      
+      for n in range(nRes1):
+        nNeighbors = neighbors[int(n*nAtoms1):int((n+1)*nAtoms1), :]
+        resNumbers[n] = len(np.unique(np.where(nNeighbors==1)[1]))
+
+      numberCoord.append(resNumbers)          
+
+      
+  # concatenate numberCoord
+  numberCoord = np.concatenate(numberCoord)
+  meanCoord = np.mean(numberCoord)
+  
+  coordDist, bins = np.histogram(numberCoord,
+                                 bins=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                                 density=False)
+
+  # save the file!                  
+  np.savetxt('coordDistribution.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
+                                                coordDist],axis=1),
+             header='# coords    frequency',fmt="%.3e")
+
+  return meanCoord
+
 ### computing CI from block averaging samples                                  
 def getCI(means):
   meanCI = means[int(0.5*len(means))]
@@ -383,7 +422,7 @@ def getBoundWrap(topFile, frame, watInds, watHInds,
   """Given a topology file and a trajectory frame, computes the bound, wrap, and non-shell water indices 
      Inputs:                                                                                                        
              topFile - topology file (path from cwd)                                              
-             trajFile - trajectory file name needed for object (TrajObjects class... maybe)
+             trajFile - trajectory file name needed for object (TrajObject class... maybe)
                   
              frame - frame fed into nc                                           
   
@@ -417,7 +456,7 @@ def getBoundWrap(topFile, frame, watInds, watHInds,
              nonShellInds - list of "non-shell" indices (neither bound nor wrap)
   """
   # load topologies and trajectories using the above class AnalysisObject        
-  obj = TrajObjects(topFile, trajFile=None, stride=1, solResName=None, 
+  obj = TrajObject(topFile, trajFile=None, stride=1, solResName=None, 
                     watResName=None)
 
   top = obj.top #loadTop()
@@ -533,7 +572,7 @@ def getBoundWrap(topFile, frame, watInds, watHInds,
   return boundInds, wrapInds, shellInds, nonShellInds
 
 ### For now this will do. It gives us a lot of useful information that we can used not only in further analyses, but for other functions in this library! Maybe I can add a functionality that gives error bars on the rdf from block averaging, but want to be a bit more confident in my implementation first...
-def rdfCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', binwidth=0.1, totbins=150, stride=1):
+def rdfCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', binwidth=0.1,totbins=150, stride=1):
   """Given a topology file and trajectory (or a list of) file, computes the Ow-Ow, solute-Ow, and solute-solute 2D radial distribution funtions. Though our primary interests lie in water-species coordination, we may arbitrarily state the residue names according to pytraj/parmed masking schemes to get the coordination between species #1 (solResName) and species #2 (watResName). Here, solute atoms will be the set of heavy atoms.
      Inputs:
              topFile - topology file (path from cwd)
@@ -548,7 +587,7 @@ def rdfCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', binwid
 
   """
   # load topologies and trajectories using the above class AnalysisObject
-  obj = TrajObjects(topFile, trajFile, stride, solResName, watResName)
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
   top = obj.top #loadTop()
   traj = obj.traj #.loadTraj()
 
@@ -558,81 +597,132 @@ def rdfCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', binwid
   # select cosolvent heavy
   solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
 
-  # define the rdf vectors to store data in with zeros. For now, only considering these three rdfs for simplicity, probably will only need OwOw and SolOw to probe wat. structure and find cutoff distance, respectively.
-  rdf_OwOw = np.zeros(totbins)
-  rdf_SolOw = np.zeros(totbins)
-  rdf_SolSol = np.zeros(totbins)
+  # set up rdf and coord storage lists
+  tot_rdf_OwOw = []; tot_rdf_SolOw = []; tot_rdf_SolSol = []
+  tot_coord_OwOw = []; tot_coord_SolOw = []; tot_coord_SolSol = []
+  tot_n1_OwOw = []; tot_n1_SolOw = []; tot_tParam = []
 
-  # loop through trajectory to compute average RDFs
-  for i,frame in enumerate(traj):
-    # grab ith positions and box vectors
-    thispos = np.array(frame.xyz)
-    thisbox = np.reshape(np.array(frame.box.values[:3]),(1,3))
+  # set up number of trajectory chunks to sample
+  nChunks = 5
+  chunkSize = int(len(traj)/nChunks)
+
+  for c in range(nChunks):
+
+    # define the rdf vectors to store data in with zeros. For now, only considering these three rdfs for simplicity, probably will only need OwOw and SolOw to probe wat. structure and find cutoff distance, respectively.
+    rdf_OwOw = np.zeros(totbins)
+    rdf_SolOw = np.zeros(totbins)
+    rdf_SolSol = np.zeros(totbins)
+
+    # loop through trajectory to compute average RDFs
+    for t, frame in enumerate(traj[int(c*chunkSize):int((c+1)*chunkSize)]):
+      # grab ith positions and box vectors
+      thispos = np.array(frame.xyz)
+      thisbox = np.reshape(np.array(frame.box.values[:3]),(1,3))
     
-    thisWat = np.array(thispos[watInds])
-    thisSol = np.array(thispos[solInds])
+      thisWat = np.array(thispos[watInds])
+      thisSol = np.array(thispos[solInds])
        
-    dist = np.linspace(0,(totbins-1)*binwidth,totbins) + binwidth
+      dist = np.linspace(0,(totbins-1)*binwidth,totbins) + binwidth
 
-    bulkdens=1.0 # set bulk density to 1.0 so we have local density plots
-    rdf_OwOw = rdf_OwOw + wl.radialdistsame(thisWat,binwidth,totbins,bulkdens,thisbox)
+      bulkdens=1.0 # set bulk density to 1.0 so we have local density plots
+      rdf_OwOw = rdf_OwOw + wl.radialdistsame(thisWat,binwidth,totbins,bulkdens,thisbox)
     
-    # include conditional to prevent calculation of sol rdfs for water
-    if solInds==[]:
-      continue
-    else:
-      rdf_SolSol = rdf_SolSol + wl.radialdistsame(thisSol,binwidth,totbins,bulkdens,thisbox)
-      rdf_SolOw = rdf_SolOw + wl.radialdist(thisSol,thisWat,binwidth,totbins,bulkdens,thisbox)
+      # include conditional to prevent calculation of sol rdfs for water
+      if solInds==[]:
+        continue
+      else:
+        rdf_SolSol = rdf_SolSol + wl.radialdistsame(thisSol,binwidth,totbins,bulkdens,thisbox)
+        rdf_SolOw = rdf_SolOw + wl.radialdist(thisSol,thisWat,binwidth,totbins,bulkdens,thisbox)
   
-  # calculate the average rdf
-  rdf_OwOw = rdf_OwOw/(1.0+i)
-  rdf_SolSol = rdf_SolSol/(1.0+i)
-  rdf_SolOw = rdf_SolOw/(1.0+i)
+    # calculate the average rdf
+    rdf_OwOw = rdf_OwOw/(1.0+t)
+    rdf_SolSol = rdf_SolSol/(1.0+t)
+    rdf_SolOw = rdf_SolOw/(1.0+t)
 
-  # compute coordination numbers
-  coord_OwOw = np.zeros(len(dist)-2)
-  coord_SolOw = np.zeros(len(dist)-2)
-  coord_SolSol = np.zeros(len(dist)-2)
-  for j in range(2,len(dist)):
-    coord_OwOw[j-2] = 8.0*np.pi*simps(rdf_OwOw[:j]*(dist[:j])**2.0, 
-                                      dist[:j])
+    # append rdfs to sample array
+    tot_rdf_OwOw.append(rdf_OwOw)
+    tot_rdf_SolSol.append(rdf_SolSol)
+    tot_rdf_SolOw.append(rdf_SolOw)
+
+    # compute coordination numbers
+    coord_OwOw = np.zeros(len(dist)-2)
+    coord_SolOw = np.zeros(len(dist)-2)
+    coord_SolSol = np.zeros(len(dist)-2)
+    for j in range(2,len(dist)):
+      coord_OwOw[j-2] = 8.0*np.pi*simps(rdf_OwOw[:j]*(dist[:j])**2.0, 
+                                        dist[:j])
+      if solInds!=[]:
+        coord_SolOw[j-2] = 4.0*np.pi*simps(rdf_SolOw[:j]*(dist[:j])**2.0, 
+                                           dist[:j])
+        coord_SolSol[j-2] = 8.0*np.pi*simps(rdf_SolSol[:j]*(dist[:j])**2.0, 
+                                            dist[:j])
+  
+    tot_coord_OwOw.append(coord_OwOw)
+    tot_coord_SolSol.append(coord_SolSol)
+    tot_coord_SolOw.append(coord_SolOw)
+
+    # once again only calculate this if solInds is not empty
     if solInds!=[]:
-      coord_SolOw[j-2] = 4.0*np.pi*simps(rdf_SolOw[:j]*(dist[:j])**2.0, 
-                                         dist[:j])
-      coord_SolSol[j-2] = 4.0*np.pi*simps(rdf_SolSol[:j]*(dist[:j])**2.0, 
-                                          dist[:j])
-  
-  # once again only calculate this if solInds is not empty
-  if solInds!=[]:
-    # estimate the second minimum in the Sol-Ow rdf
-    relMin_SolOW = rdf_SolOw[argrelmin(rdf_SolOw)]
-    cutoff = dist[argrelmin(rdf_SolOw)][:3]
+      # estimate the second minimum in the Sol-Ow rdf
+      relMin_SolOW = rdf_SolOw[argrelmin(rdf_SolOw)]
+      cutoff = dist[argrelmin(rdf_SolOw)][:3]
 
-    # estimate n1_SolOw @ "first" min.
-    n1_SolOw = coord_SolOw[argrelmin(rdf_SolOw)[0][0]-2]
+      # estimate n1_SolOw @ "first" min.
+      n1_SolOw = coord_SolOw[argrelmin(rdf_SolOw)[0][0]-2]
+      tot_n1_SolOw.append(n1_SolOw)
 
-  relMin_OwOw = rdf_OwOw[argrelmin(rdf_OwOw)]
-  n1_OwOw = coord_OwOw[argrelmin(rdf_OwOw)[0][0]-2]
+    relMin_OwOw = rdf_OwOw[argrelmin(rdf_OwOw)]
+    n1_OwOw = coord_OwOw[argrelmin(rdf_OwOw)[0][0]-2]
 
-  rdf = rdf_OwOw[:argrelmin(rdf_OwOw)[0][0]]/rdf_OwOw[-1]
-  rdf_dist = dist[:argrelmin(rdf_OwOw)[0][0]]
-  rc = dist[argrelmin(rdf_OwOw)[0][0]]
+    rdf = rdf_OwOw[:argrelmin(rdf_OwOw)[0][0]]/rdf_OwOw[-1]
+    rdf_dist = dist[:argrelmin(rdf_OwOw)[0][0]]
+    rc = dist[argrelmin(rdf_OwOw)[0][0]]
+          
+    tParam = simps(rdf, rdf_dist)/rc
+    tot_n1_OwOw.append(n1_OwOw)
+    tot_tParam.append(tParam)
 
-  t = simps(rdf, rdf_dist)/rc
+  # convert rdf and coord nums to arrays
+  tot_rdf_OwOw = np.array(tot_rdf_OwOw)
+  tot_rdf_SolOw = np.array(tot_rdf_SolOw)
+  tot_rdf_SolSol = np.array(tot_rdf_SolSol)
+
+  tot_coord_OwOw = np.array(tot_coord_OwOw)
+  tot_coord_SolOw = np.array(tot_coord_SolOw)
+  tot_coord_SolSol = np.array(tot_coord_SolSol)
+
+  # compute mean and SE of mean for each quant
+  rdf_OwOw_se = np.std(tot_rdf_OwOw, axis=0, ddof=1)/np.sqrt(nChunks-1)
+  rdf_SolOw_se = np.std(tot_rdf_SolOw, axis=0, ddof=1)/np.sqrt(nChunks-1)
+  rdf_SolSol_se = np.std(tot_rdf_SolSol, axis=0, ddof=1)/np.sqrt(nChunks-1)
+
+  coord_OwOw_se = np.std(tot_coord_OwOw, axis=0, ddof=1)/np.sqrt(nChunks-1)
+  coord_SolOw_se = np.std(tot_coord_SolOw, axis=0, ddof=1)/np.sqrt(nChunks-1)
+  coord_SolSol_se = np.std(tot_coord_SolSol, axis=0, ddof=1)/np.sqrt(nChunks-1)
+
+  n1_OwOw_se = np.std(np.array(tot_n1_OwOw), ddof=1)/np.sqrt(nChunks-1)
+  n1_SolOw_se = np.std(np.array(tot_n1_SolOw), ddof=1)/np.sqrt(nChunks-1)
+  tParam_se = np.std(np.array(tot_tParam), ddof=1)/np.sqrt(nChunks-1)
+
+  n1_OwOw = np.mean(tot_n1_OwOw)
+  n1_SolOw = np.mean(tot_n1_SolOw)
+  tParam = np.mean(tot_tParam)
 
   np.savetxt('rdf.txt', np.stack([dist,
-                                  rdf_OwOw,
-                                  rdf_SolSol,
-                                  rdf_SolOw], axis=1),
-             header='pair distance (A)    Ow-Ow rdf     Sol-Sol rdf     Sol-Ow rdf',fmt="%.3e")
+                                  rdf_OwOw, rdf_OwOw_se,
+                                  rdf_SolSol, rdf_SolSol_se,
+                                  rdf_SolOw, rdf_SolOw_se], 
+                                 axis=1),
+             header='pair distance (A)     Ow-Ow rdf     err     Sol-Sol rdf     err     Sol-Ow rdf     err',fmt="%.3e")
   np.savetxt('coord.txt', np.stack([dist[2:], 
-                                    coord_OwOw,
-                                    coord_SolSol,
-                                    coord_SolOw],axis=1),
-             header='pair distance (A)    Ow-Ow n1     Sol-Sol n1     Sol-Ow n1',fmt="%.3e")
+                                    coord_OwOw, coord_OwOw_se,
+                                    coord_SolSol, coord_SolSol_se,
+                                    coord_SolOw, coord_SolOw_se],
+                                   axis=1),
+             header='pair distance (A)     Ow-Ow n1     err     Sol-Sol n1     err     Sol-Ow n1     err',fmt="%.3e")
 
   if solInds!=[]:
-    return n1_OwOw, n1_SolOw, t
+    return [n1_OwOw, n1_OwOw_se], [n1_SolOw, n1_SolOw_se], [tParam, tParam_se]
   else:
     return n1_OwOw, t
 
@@ -648,7 +738,7 @@ def hbCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', stride=
              avgHBs - avg # species HBs                              
   """
   # load topologies and trajectories using the above class AnalysisObject  
-  obj = TrajObjects(topFile, trajFile, stride, solResName, watResName)
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
   top = obj.top #loadTop()
   traj = obj.traj #loadTraj()
 
@@ -677,6 +767,7 @@ def hbCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', stride=
 
   # compute number of per cosolute accepting heavy atoms and donor hydrogens
   nSol = traj[:1, solResName].topology.n_residues
+
   nAccO = int(len(sol_acceptorOInds)/nSol)
   nAccN = int(len(sol_acceptorNInds)/nSol)
   nDonO = int(len(sol_donorOInds)/nSol)
@@ -742,6 +833,7 @@ def hbCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', stride=
                                    sol_donorNPos,sol_donorHNPos,
                                    thisbox, 3.5, 120.0)
 
+
 #    if watsolOHBs.shape[1]==0:
 #      watsolOHBs = np.zeros((len(watInds),1))
 #    if watsolNHBs.shape[1]==0:
@@ -791,10 +883,19 @@ def hbCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', stride=
     numTot = watwatTot + watsolOTot + watsolNTot
     numWatHBs.append(numTot) 
 
-  numWatHBs = np.concatenate(numWatHBs)
-  numSolHBs = np.concatenate(numSolHBs)
+  # check if we need to concatenate
+  if type(numWatHBs[0]) is not np.ndarray:
+    pass
+  else:
+    numWatHBs = np.concatenate(numWatHBs)
+  
+  if type(numSolHBs[0]) is not np.ndarray:
+    pass
+  else:
+    numSolHBs = np.concatenate(numSolHBs)
+  
   avgWatHBs = np.mean(numWatHBs)
-  avgSolHbs = np.mean(numSolHBs)
+  avgSolHBs = np.mean(numSolHBs)
 
   hbDist, bins = np.histogram(numWatHBs, 
                               bins=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
@@ -860,7 +961,7 @@ def voronoi_volumes(points, boxL, numWats):
 
   return vol, area
 
-def voronoiCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
+def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
   """Given a topology file and trajectory (or a list of) file, computes the Ow-Ow, solute-Ow, and solute-solute 2D radial distribution funtions. Here, solute atoms will be the set of heavy atoms.
      Inputs:
              topFile - topology file (path from cwd)
@@ -878,7 +979,7 @@ def voronoiCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watRe
 
   """
   # load topologies and trajectories using the above class AnalysisObject
-  obj = TrajObjects(topFile, trajFile, stride, solResName, watResName)
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
   top = obj.top #loadTop()
   traj = obj.traj #.loadTraj()
 
@@ -886,7 +987,8 @@ def voronoiCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watRe
   watInds, watHInds, lenWat = obj.getWatInds()
 
   # select cosolvent heavy
-  solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
+  #solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
+  solInds, solHInds, _, _, _, _ = obj.getSolInds()
 
   # get all heavy indices
   heavyInds = np.concatenate((watInds,solInds))
@@ -909,8 +1011,14 @@ def voronoiCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watRe
 
   # loop through trajectory to compute average RDFs
   for t, frame in enumerate(traj):
-    # reorder and get subIndices for this frame
-    inds = [ [ mapHeavy[ subInds[t][i][j] ] for j in range(len(subInds[t][i])) ] for i in range(nPops) ]
+
+    if subInds is None:
+      inds = [ [ mapHeavy[ ind ] for ind in watInds ] ]
+    else:
+      # reorder and get subIndices for this frame
+      inds = [ [ mapHeavy[ subInds[t][i][j] ] 
+                 for j in range(len(subInds[t][i])) ] 
+               for i in range(nPops) ]
 
     # grab ith positions and box vectors
     thispos = np.array(frame.xyz)
@@ -1002,7 +1110,163 @@ def voronoiCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watRe
 
   return avgVol, varVol, avgArea, varArea, avgEta, varEta
 
-def threeBodyCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', nBins=50, stride=1):
+def hydratedVolumeCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
+  """Given a topology file and trajectory (or a list of) file, computes the effective hydrated molecular volume of the non-water molecules. Here, solute atoms will be the set of heavy atoms.
+     Inputs:
+             topFile - topology file (path from cwd)
+             trajFile - trajectory file, or list of them (path from cwd)
+             solResName - string defining the residue name for the non-water cosolvent. Default='(!:WAT)'
+             watResName - string defining the residue name for the water. Default='(:WAT)'
+             subInds - list containing water indices for n-populations at each timestep
+                       (e.g., [ [boundInds, wrapInds]_{0}, ..., [boundInds, wrapInds]_{t} ])
+
+             nPops - the number of populations in subInds (Default=1)
+             stride - skip every "stride" steps of the trajectory (int). Default=1
+     Outputs:
+             avgVol - estimate of the mean hydrated volume (Angstrom^3)
+             varVol - estimate of the var. of the hydrated volume (Angstrom^3)
+
+  """
+  # load topologies and trajectories using the above class AnalysisObject
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
+  top = obj.top #loadTop()
+  traj = obj.traj #.loadTraj()
+
+  # select water oxygen and hydrogen indices
+  watInds, watHInds, lenWat = obj.getWatInds()
+
+  # select cosolvent heavy
+  #solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
+  solInds, solHInds, _, _, _, _ = obj.getSolInds()
+
+  # get all heavy indices
+  heavyInds = np.concatenate((watInds,solInds))
+
+  # define opposite ordering
+  orderedInds = np.concatenate((solInds, watInds))
+
+  # create mapping function from water index to heavyInds equivalent
+  mapHeavy = {watInds[i]:i for i in range(len(watInds))}
+
+  # Create lists to store volume and area values.
+  molVol = [ [] for i in range((nPops+1)) ]
+
+  # Lists to store mean and var. volume, area, and asphericity
+  avgVol = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+  varVol = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+
+  # loop through trajectory to compute average RDFs
+  for t, frame in enumerate(traj):
+
+    if subInds is None:
+      inds = [ [ mapHeavy[ ind ] for ind in watInds ] ]
+    else:
+      # reorder and get subIndices for this frame
+      inds = [ [ mapHeavy[ subInds[t][i][j] ] 
+                 for j in range(len(subInds[t][i])) ] 
+               for i in range(nPops) ]
+
+    # grab ith positions and box vectors
+    thispos = np.array(frame.xyz)
+    thisbox = np.reshape(np.array(frame.box.values[:3]),(1,3))
+ 
+    thisHeavy = np.array(thispos[heavyInds])
+    thisOrdered = np.array(thispos[orderedInds])
+
+    # get contact list with the non-water cosolvent
+    contacts, _, _, _ = sl.voronoi_contacts(thisHeavy, 
+                                            thisbox[0][0], len(solInds))
+
+    print(contacts)
+    print(contacts.shape)
+    print(np.sum(contacts))
+    stop
+
+    # calculate the voronoi cell volumes
+    VV = voronoi_volumes(thisHeavy, thisbox[0,0], len(watInds))
+    Vol = VV[0][:len(watInds)]
+    Area = VV[1][:len(watInds)]
+
+    # get volume and area properties of all waters
+#    watVol[0].append( Vol[~np.isinf(Vol)] ); watArea[0].append( Area[~np.isinf(Area)] )
+#    watEta[0].append( Area[~np.isinf(Area)]**3.0/36.0/np.pi / 
+#                      Vol[~np.isinf(Vol)]**2.0 )
+
+#    avgVol[0][t] = np.mean( Vol[~np.isinf(Vol)] ); varVol[0][t] = np.var( Vol[~np.isinf(Vol)] )
+#    avgArea[0][t] = np.mean( Area[~np.isinf(Area)] ); varArea[0][t] = np.var( Area[~np.isinf(Area)] )
+#    avgEta[0][t] = np.mean( Area[~np.isinf(Area)]**3.0/36.0/np.pi/Vol[~np.isinf(Vol)]**2.0 )
+#    varEta[0][t] = np.var( Area[~np.isinf(Area)]**3.0/36.0/np.pi/Vol[~np.isinf(Vol)]**2.0 )
+
+    # loop through subPositions
+#    for j in range(1, (nPops+1)):
+#      watVol[j].append( Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])] )
+#      watArea[j].append( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])] )
+#      watEta[j].append( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])]**3.0/36.0/np.pi / 
+#                        Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])]**2.0 )
+
+#      avgVol[j][t] = np.mean( Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])] )
+#      varVol[j][t] = np.var( Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])] )
+
+#      avgArea[j][t] = np.mean( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])] )
+#      varArea[j][t] = np.var( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])] )
+      
+#      avgEta[j][t] = np.mean( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])]**3.0/36.0/np.pi / 
+#                              Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])]**2.0 )
+#      varEta[j][t] = np.var( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])]**3.0/36.0/np.pi /
+#                             Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])]**2.0 ) 
+
+      
+  # estimate simulation average and CIs using block averaging
+#  avgVol_mean = np.zeros((nPops+1)); avgVol_CI = np.zeros((nPops+1))
+#  varVol_mean = np.zeros((nPops+1)); varVol_CI = np.zeros((nPops+1))
+#  avgArea_mean = np.zeros((nPops+1)); avgArea_CI = np.zeros((nPops+1))
+#  varArea_mean = np.zeros((nPops+1)); varArea_CI = np.zeros((nPops+1))
+#  avgEta_mean = np.zeros((nPops+1)); avgEta_CI = np.zeros((nPops+1))
+#  varEta_mean = np.zeros((nPops+1)); varEta_CI = np.zeros((nPops+1))
+ 
+#  for j in range((nPops+1)):
+#    avgVol_CI[j] = blockAverage(avgVol[j][:]); avgVol_mean[j] = np.mean(avgVol[j][:])
+#    varVol_CI[j] = blockAverage(varVol[j][:]); varVol_mean[j] = np.mean(varVol[j][:])
+#    avgArea_CI[j] = blockAverage(avgArea[j][:]); avgArea_mean[j] = np.mean(avgArea[j][:])
+#    varArea_CI[j] = blockAverage(varArea[j][:]); varArea_mean[j] = np.mean(varArea[j][:])
+#    avgEta_CI[j] = blockAverage(avgEta[j][:]); avgEta_mean[j] = np.mean(avgEta[j][:])
+#    varEta_CI[j] = blockAverage(varEta[j][:]); varEta_mean[j] = np.mean(varEta[j][:])
+
+#    VolDist, bins = np.histogram(np.concatenate(watVol[j]), bins=500,
+#                                 range=[10.0, 60.0],
+#                                 density=False)
+
+    # save the file!                                                            
+#    np.savetxt('VolDistribution_'+str(j)+'.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
+#                                                           VolDist],axis=1),
+#               header='water volume (A^3)    frequency',fmt="%.3e")
+    
+#    AreaDist, bins = np.histogram(np.concatenate(watArea[j]), bins=500,
+#                                  range=[10.0, 100.0],
+#                                  density=False)
+                                                 
+    # save the file!                                                            
+#    np.savetxt('AreaDistribution_'+str(j)+'.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
+#                                                            AreaDist],axis=1),
+#               header='water area (A^2)    frequency',fmt="%.3e")
+    
+#    EtaDist, bins = np.histogram(np.concatenate(watEta[j]), bins=500,
+#                                 range=[1.00, 2.5],
+#                                 density=False)
+
+    # save the file!                                                           
+#    np.savetxt('EtaDistribution_'+str(j)+'.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
+#                                                           EtaDist],axis=1),
+#               header='asphericity    frequency',fmt="%.3e")
+
+
+#  avgVol = [avgVol_mean, avgVol_CI]; varVol = [varVol_mean, varVol_CI]
+#  avgArea = [avgArea_mean, avgArea_CI]; varArea = [varArea_mean, varArea_CI]
+#  avgEta = [avgEta_mean, avgEta_CI]; varEta = [varEta_mean, varEta_CI]
+
+  return 0
+
+def threeBodyCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', nBins=500, stride=1, output2D=False):
   """Given a topology file and trajectory (or a list of) file, computes the three-body angle distribution for the system-aveage and for as specific population (i.e. hydration shell, bound, or wrap)
      Inputs:                                                                                                        
              topFile - topology file (path from cwd)                                                                
@@ -1012,6 +1276,7 @@ def threeBodyCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)'
              subInds - list containing water indices for n-populations at each timestep
                        (e.g., [ [boundInds, wrapInds]_{0}, ..., [boundInds, wrapInds]_{t} ])
              stride - skip every "stride" steps of the trajectory (int). Default=1                                  
+             output2D - switch to save off wat-wat coords and generate 2D histogram of (theta, Nc) space (default=False)
      Outputs lists of distribution properties for each population(e.g., [i_bound, i_wrap]):   
              fracTet - pop. of tetrahedral waters                             
              avgCos - avg. cos from tet. portion of the distribution 
@@ -1020,7 +1285,7 @@ def threeBodyCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)'
              nWats - number of waters in each population
   """
   # load topologies and trajectories using the above class AnalysisObject                                           
-  obj = TrajObjects(topFile, trajFile, stride, solResName, watResName)
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
   top = obj.top #loadTop()
   traj = obj.traj #loadTraj()
 
@@ -1032,6 +1297,10 @@ def threeBodyCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)'
 
   # set up empty lists to hold 3body Dist. for water populations
   angles = [ [] for i in range((nPops+1)) ]
+  
+  # set up empty list to hold water-water coordination numbers for 3-body angles
+  numbers = []
+  angles_trial = []
   
   # lists to store distribution statistics for each water population
   nWats = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
@@ -1053,9 +1322,18 @@ def threeBodyCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)'
       subPos = [ pos[subInds[t][i]] for i in range(nPops) ]
 
     # compute 3body-dists for all waters and compute statistics
-    [jAngles, jNumbrs] = wp.getCosAngs(watPos, watPos, thisbox)
+    [jAngles, jNumbers] = wp.getCosAngs(watPos, watPos, thisbox)
+
     angles[0].append(jAngles)
     nWats[0][t] = len(watInds)
+    if output2D:
+      count = 0
+      for n in jNumbers:
+        count=int(n-1)
+        while count>0:
+          numbers.append( [int(n-1) for k in range(count)] )
+          count = count - 1        
+   
     if len(angles[0])!=0:
       angDist, bins, a, b, c, d = wp.tetrahedralMetrics(jAngles, nBins=nBins)
       pTet[0][t] = a; avgCos[0][t] = b; varCos[0][t] = c; entropy[0][t] = d
@@ -1103,9 +1381,49 @@ def threeBodyCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)'
                                                             angDist],axis=1),
                  header='3-body angle (deg)    frequency',fmt="%.3e")
 
+  # if saving (theta,Nc) 2D-histogram, compute and save
+  if output2D:
+    numbers = np.concatenate(numbers).astype(float)
+    
+    # pre-define x and y edges
+    xedges = np.arange(-1.5, 13.5, 1)
+    yedges = np.linspace(0, 180, 500)
+    H, xedges, yedges = np.histogram2d(numbers, angles[0],
+                                       #angles[0], numbers, 
+                                       bins=(xedges, yedges))
+
+    H = H/np.sum(H)
+        
+    fig, ax = plt.subplots(figsize=(4,4))
+    xcenters = (xedges[:-1] + xedges[1:]) / 2
+    ycenters = (yedges[:-1] + yedges[1:]) / 2
+
+    ax.imshow(H, interpolation='gaussian', cmap='viridis', aspect='auto',
+              origin='lower',
+              extent=(ycenters[0], ycenters[-1],
+                      xcenters[1], xcenters[-1])
+    )
+
+    print('the mean three-body angle is {}'.format(np.mean(angles[0])) )
+    print('the mean water-water coord. is {}'.format(np.mean(numbers)) )
+
+    ax.axvline(x=50, linewidth=1, linestyle='dashed', color='white')
+    ax.axvline(x=np.mean(angles[0]), 
+               linewidth=1, linestyle='dashed', color='grey')
+    ax.axvline(x=130, linewidth=1, linestyle='dashed', color='darkorange')
+    ax.axhline(y=4, linewidth=1, linestyle='dashed', color='magenta')
+
+    ax.set_xticks(np.arange(0, 200, 20))
+    ax.set_yticks(np.arange(0, 13, 2))
+    ax.set_xlim([0, 180])
+    ax.set_ylim([0, 12])
+    ax.set_xlabel(r'$\theta [^{\circ}]$')
+    ax.set_ylabel(r'$N_{c}$')
+    plt.savefig('3bDistribution_2D.png')
+
   return pTet, avgCos, varCos, entropy, nWats
 
-def tetOrderCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
+def tetOrderCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
   """Given a topology file and trajectory (or a list of) file, computes the tet. order parameter distribution for the system-aveage and for as specific population (i.e. hydration shell, bound, or wrap)
      Inputs:                                                                                                        
              topFile - topology file (path from cwd)                                                                
@@ -1120,7 +1438,7 @@ def tetOrderCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watR
              varQ - var. tet. order param
   """
   # load topologies and trajectories using the above class AnalysisObject                   
-  obj = TrajObjects(topFile, trajFile, stride, solResName, watResName)
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
   top = obj.top #loadTop()
   traj = obj.traj #loadTraj()
 
@@ -1143,8 +1461,11 @@ def tetOrderCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watR
     thisbox = np.array(frame.box.values[:3])
     watPos = pos[watInds]
 
-    # grab sub-water population positions
-    subPos = [ pos[subInds[t][i]] for i in range(nPops) ]
+    if subInds is None:
+      subPos = watPos
+    else:
+      # grab sub-water population positions
+      subPos = [ pos[subInds[t][i]] for i in range(nPops) ]
 
     # compute q-dists for all waters and compute statistics
     jQ = wp.getOrderParamq(watPos, watPos, thisbox)
@@ -1181,7 +1502,88 @@ def tetOrderCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watR
 
   return avgQ, varQ
 
-def lsiCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
+def hexOrderCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', endResName='(:WAT)', stride=1, lowCut=0.0, highCut=7.0):
+  """Given a topology file and trajectory (or a list of) file, computes the hexagonal. order parameter distribution for the system-aveage and for surface atoms
+     Inputs:                                                                                                        
+             topFile - topology file (path from cwd)                                                                
+             trajFile - trajectory file, or list of them (path from cwd)                                            
+             solResName - string defining the residue name for the non-water cosolvent. Default='(!:WAT)'               
+             endResName - string defining the residue name for the chain ends. Default='(:WAT)'                             
+             subInds - list containing water indices for n-populations at each timestep
+                       (e.g., [ [boundInds, wrapInds]_{0}, ..., [boundInds, wrapInds]_{t} ])
+             stride - skip every "stride" steps of the trajectory (int). Default=1                                  
+     Outputs lists of distribution properties for each population(e.g., [i_bound, i_wrap]):   
+             avgPsi - avg. psi-6 order param 
+             varPsi - var. psi-6 order param
+  """
+  # load topologies and trajectories using the above class AnalysisObject                   
+  obj = TrajObject(topFile, trajFile, stride, solResName, endResName)
+  top = obj.top #loadTop()
+  traj = obj.traj #loadTraj()
+
+  # select water oxygen and hydrogen indices                        
+  endInds, endHInds, lenEnd = obj.getWatInds()
+  endInds = endInds[1::2]
+
+  # select cosolvent heavy atoms
+  solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
+
+  # set up empty lists to hold psi-Dist. for water populations
+  psiVals = [ [] for i in range((nPops+1)) ]
+  
+  # lists to store distribution statistics for each water population
+  avgPsi = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+  varPsi = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+
+  for t,frame in enumerate(traj):
+    # get water positions and box info
+    pos = np.array(frame.xyz)
+    thisbox = np.array(frame.box.values[:3])
+    endPos = pos[endInds]
+
+    if subInds is None:
+      subPos = endPos
+    else:
+      # grab sub-end population positions
+      subPos = [ pos[subInds[t][i]] for i in range(nPops) ]
+
+    # compute psi6-dists for all end and compute statistics
+    jPsi = wp.getOrderParamPsi(endPos, endPos, thisbox, 
+                               lowCut=0.0, highCut=7.0)
+    psiVals[0].append(jPsi)
+    avgPsi[0][t] = np.mean(jPsi); varPsi[0][t] = np.var(jPsi)
+
+    # compute psi-dists for each population and compute statistics
+    for j in range(1, (nPops+1)):
+      jPsi = wp.getOrderParamPsi(subPos[j-1], endPos, thisbox)
+      psiVals[j].append(jPsi)
+
+      avgPsi[j][t] = np.mean(jPsi); varPsi[j][t] = np.var(jPsi)
+
+  avgPsi_mean = np.zeros((nPops+1)); avgPsi_CI = np.zeros((nPops+1))
+  varPsi_mean = np.zeros((nPops+1)); varPsi_CI = np.zeros((nPops+1))
+  for j in range((nPops+1)):
+    avgPsi_CI[j] = blockAverage(avgPsi[j][:]); avgPsi_mean[j] = np.mean(avgPsi[j][:])
+    varPsi_CI[j] = blockAverage(varPsi[j][:]); varPsi_mean[j] = np.mean(varPsi[j][:])
+
+  # combine mean and CI for each statistic
+  avgPsi = [avgPsi_mean, avgPsi_CI]
+  varPsi = [varPsi_mean, varPsi_CI]
+
+  # compute (avg.) sub-poulation psi6-distributions
+  for j in range((nPops+1)):
+    psiVals[j] = np.concatenate(psiVals[j])
+    psiDist, bins = np.histogram(psiVals[j], bins=500,
+                                 range=[0.0, 1.0],
+                                 density=False)
+
+    np.savetxt('psiDistribution_'+str(j)+'.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
+                                                           psiDist],axis=1),
+               header='psiVal    frequency',fmt="%.3e")
+
+  return avgPsi, varPsi
+
+def lsiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
   """Given a topology file and trajectory (or a list of) file, computes the local structure index (LSI) distribution for the system-aveage and for as specific population (i.e. hydration shell, bound, or wrap)
      Inputs:                                                                                                        
              topFile - topology file (path from cwd)                                                                
@@ -1196,7 +1598,7 @@ def lsiCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watResNam
              varLSI - var. LSI
   """
   # load topologies and trajectories using the above class AnalysisObject                   
-  obj = TrajObjects(topFile, trajFile, stride, solResName, watResName)
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
   top = obj.top #loadTop()
   traj = obj.traj #loadTraj()
 
@@ -1219,8 +1621,11 @@ def lsiCalc(topFile, trajFile, subInds, nPops=1, solResName='(!:WAT)', watResNam
     thisbox = np.array(frame.box.values[:3])
     watPos = pos[watInds]
 
-    # grab sub-water population positions
-    subPos = [ pos[subInds[t][i]] for i in range(nPops) ]
+    if subInds is None:
+      subPos = watPos
+    else:
+      # grab sub-water population positions
+      subPos = [ pos[subInds[t][i]] for i in range(nPops) ]
 
     # compute LSI-dists for all waters and compute statistics
     [jLSI, numLSI] = wp.getLSI(watPos, watPos, thisbox)
@@ -1274,7 +1679,7 @@ def chemPotCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)', pr
              avgN2 - avg. N^2 from Pv[N]                
   """
   # load topologies and trajectories using the above class AnalysisObject
-  obj = TrajObjects(topFile, trajFile, stride, solResName, watResName)
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
   top = obj.top #loadTop()
   traj = obj.traj #loadTraj()
 
@@ -1398,11 +1803,10 @@ def contactAreaCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)'
              fracArea - fraction of the area occupied by each population
   """
   # load topologies and trajectories using the above class AnalysisObject       
-  obj = TrajObjects(topFile, trajFile, stride, solResName, watResName)  
+  obj = TrajObject(topFile, trajFile, stride, solResName, watResName)  
 
   top = obj.top #loadTop()
   traj = obj.traj #loadTraj()
-  print(traj)
 
   # convert given indices to heavy index basis
   def convertHeavyInds(heavyInds, targetInds):
@@ -1517,7 +1921,6 @@ def contactAreaCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)'
     fracPhilic[t] = totPhilic[t]/tot[t]
     fracBound[t] = totBound[t]/tot[t]
     fracWrap[t] = totWrap[t]/tot[t]
-    print(t, start-timeit.time())
 
   tot_CI=blockAverage(tot);tot=np.mean(tot)
   totPhobic_CI=blockAverage(totPhobic);totPhobic=np.mean(totPhobic)
@@ -1539,7 +1942,7 @@ def contactAreaCalc(topFile, trajFile, solResName='(!:WAT)', watResName='(:WAT)'
   return totArea, totArea_CI, fracArea, fracArea_CI
 
 # I'm implementing a switch here. If TRUE, run the test script! 
-switch = True
+switch = False
 
 if switch:
   # getting top and struct names from command line
@@ -1547,23 +1950,29 @@ if switch:
   trajFile = sys.argv[2]
 
   stride = 100
-  obj = TrajObjects(topFile, trajFile, stride=stride, 
-                    solResName=(':MOL'), watResName=(':WAT'))
-  top = obj.top #loadTop()                                                     
-  traj = obj.traj #.loadTraj()                                              
+  obj = TrajObject(topFile, trajFile, stride=stride, 
+                   solResName=(':MOL'), watResName=(':WAT'))
+  top = obj.top                                                      
+  traj = obj.traj                                               
+
+  avgVol, varVol, avgArea, varArea, avgEta, varEta = voronoiCalc(topFile, 
+                                                                 trajFile, 
+                                                                 subInds=None,
+                                                                 nPops=0, 
+                                                                 solResName='(!:WAT)', 
+                                                                 watResName='(:WAT)', 
+                                                                 stride=100)
+
+  print(avgVol)
+  print(avgArea)
+  print(avgEta)
+  stop
 
   # select water oxygen and hydrogen indices                                
   watInds, watHInds, lenWat = obj.getWatInds()
 
   # select cosolvent heavy                                                  
   solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
-
-  # temporarily... look at only the first DMSO in the topology to generate a list of bound and wrap indices
-  solInds = solInds[:4]
-  solHInds = solHInds[:6]
-  solCInds = solCInds[:2]
-  solOInds = np.array([solOInds[0]])
-  solSInds = np.array([solSInds[0]])
 
   hbOInds, hbNInds = getHBInds(top, traj[0], solInds, solHInds, solNInds, solOInds)
 
