@@ -961,18 +961,32 @@ def voronoi_volumes(points, boxL, numWats):
 
   return vol, area
 
-def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
+def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', stride=1, cutoff=4.0, hbDist=3.0, hbAng=150.0):
   """Given a topology file and trajectory (or a list of) file, computes the Ow-Ow, solute-Ow, and solute-solute 2D radial distribution funtions. Here, solute atoms will be the set of heavy atoms.
      Inputs:
              topFile - topology file (path from cwd)
              trajFile - trajectory file, or list of them (path from cwd)
              solResName - string defining the residue name for the non-water cosolvent. Default='(!:WAT)'
              watResName - string defining the residue name for the water. Default='(:WAT)'
-             subInds - list containing water indices for n-populations at each timestep
-                       (e.g., [ [boundInds, wrapInds]_{0}, ..., [boundInds, wrapInds]_{t} ])
+             subInds - Options:
+                       None - only get bulk quantity (Default)
+
+                       'bound' - perform getBoundWrap() to extract 
+                                 bound and wrap indices for:
+                                 cutoff, hbDist and hbAng defined in voronoiCalc() 
+
+                       list containing water indices for n-populations at each 
+                       timestep 
+                       (e.g., [[boundInds,wrapInds]_{0},...,[boundInds,wrapInds]_{t}])
 
              nPops - the number of populations in subInds (Default=1)
+
              stride - skip every "stride" steps of the trajectory (int). Default=1
+
+             cutoff - solute hydration shell cutoff radius in Angstroms (Default=4.0)
+             hbDist - hydrogen bond cutoff distance in Angstroms (Default=3.0)
+             hbAng - hydrogen bond cutoff angle in degrees (Default=150.0)
+
      Outputs:
              avgLSI - estimate of the mean LSI (Angstrom^2)
              stdLSI - estimate of the standard dev. LSI (Angstrom^2)
@@ -987,8 +1001,7 @@ def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', 
   watInds, watHInds, lenWat = obj.getWatInds()
 
   # select cosolvent heavy
-  #solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
-  solInds, solHInds, _, _, _, _ = obj.getSolInds()
+  solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
 
   # get all heavy indices
   heavyInds = np.concatenate((watInds,solInds))
@@ -1014,6 +1027,18 @@ def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', 
 
     if subInds is None:
       inds = [ [ mapHeavy[ ind ] for ind in watInds ] ]
+    elif subInds=='bound':
+      boundInds, wrapInds, shellInds, nonShellInds = getBoundWrap(topFile, frame, 
+                                                                  watInds, watHInds,
+                                                                  solInds, solHInds, 
+                                                                  solCInds, solOInds, 
+                                                                  solNInds, solSInds,
+                                                                  cutoff=cutoff, 
+                                                                  hbDist=hbDist, 
+                                                                  hbAng=hbAng)
+      # use boundWrap to extract bound and wrap indices
+      inds = [ mapHeavy[boundInds], mapHeavy[wrapInds] ] 
+      nPops = 2 # set number of populations to account for bound/wrap
     else:
       # reorder and get subIndices for this frame
       inds = [ [ mapHeavy[ subInds[t][i][j] ] 
