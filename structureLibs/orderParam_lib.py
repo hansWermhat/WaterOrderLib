@@ -25,7 +25,7 @@ from matplotlib.image import NonUniformImage
 import surface_library as sl
 
 # testing sortlib and waterlib versions in "ProteinDev" project 
-sys.path.append('/home/drobins/ProteinDev/fortran')
+sys.path.append('../fortran')
 import sortlib
 import waterlib as wl
 
@@ -961,7 +961,11 @@ def voronoi_volumes(points, boxL, numWats):
 
   return vol, area
 
-def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', stride=1, cutoff=4.0, hbDist=3.0, hbAng=150.0):
+def voronoiCalc(topFile, trajFile, 
+                subInds=None, nPops=0, 
+                solResName='(!:WAT)', watResName='(:WAT)', 
+                stride=1, 
+                cutoff=4.2, hbDist=3.0, hbAng=150.0):
   """Given a topology file and trajectory (or a list of) file, computes the Ow-Ow, solute-Ow, and solute-solute 2D radial distribution funtions. Here, solute atoms will be the set of heavy atoms.
      Inputs:
              topFile - topology file (path from cwd)
@@ -1009,19 +1013,6 @@ def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', 
   # create mapping function from water index to heavyInds equivalent
   mapHeavy = {watInds[i]:i for i in range(len(watInds))}
 
-  # Create lists to store volume and area values.
-  watVol = [ [] for i in range((nPops+1)) ]
-  watArea = [ [] for i in range((nPops+1)) ]
-  watEta = [ [] for i in range((nPops+1)) ]
-
-  # Lists to store mean and var. volume, area, and asphericity
-  avgArea = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
-  varArea = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
-  avgVol = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
-  varVol = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
-  avgEta = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
-  varEta = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
-
   # loop through trajectory to compute average RDFs
   for t, frame in enumerate(traj):
 
@@ -1036,14 +1027,33 @@ def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', 
                                                                   cutoff=cutoff, 
                                                                   hbDist=hbDist, 
                                                                   hbAng=hbAng)
+
       # use boundWrap to extract bound and wrap indices
-      inds = [ mapHeavy[boundInds], mapHeavy[wrapInds] ] 
+      boundInds_new = [ mapHeavy[ ind ] for ind in boundInds ]
+      wrapInds_new = [ mapHeavy[ ind ] for ind in wrapInds ]
+      inds = [ boundInds_new, wrapInds_new ] 
       nPops = 2 # set number of populations to account for bound/wrap
     else:
       # reorder and get subIndices for this frame
       inds = [ [ mapHeavy[ subInds[t][i][j] ] 
                  for j in range(len(subInds[t][i])) ] 
                for i in range(nPops) ]
+
+    # in first timestep, define arrays for statistics
+    if t==0:
+        # Create lists to store volume and area values.
+      watVol = [ [] for i in range((nPops+1)) ]
+      watArea = [ [] for i in range((nPops+1)) ]
+      watEta = [ [] for i in range((nPops+1)) ]
+
+      # Lists to store mean and var. volume, area, and asphericity
+      avgArea = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+      varArea = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+      avgVol = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+      varVol = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+      avgEta = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+      varEta = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+
 
     # grab ith positions and box vectors
     thispos = np.array(frame.xyz)
@@ -1135,17 +1145,15 @@ def voronoiCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', 
 
   return avgVol, varVol, avgArea, varArea, avgEta, varEta
 
-def hydratedVolumeCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', stride=1):
+def hydratedVolumeCalc(topFile, trajFile, 
+                       solResName='(!:WAT)', watResName='(:WAT)', 
+                       stride=1):
   """Given a topology file and trajectory (or a list of) file, computes the effective hydrated molecular volume of the non-water molecules. Here, solute atoms will be the set of heavy atoms.
      Inputs:
              topFile - topology file (path from cwd)
              trajFile - trajectory file, or list of them (path from cwd)
              solResName - string defining the residue name for the non-water cosolvent. Default='(!:WAT)'
              watResName - string defining the residue name for the water. Default='(:WAT)'
-             subInds - list containing water indices for n-populations at each timestep
-                       (e.g., [ [boundInds, wrapInds]_{0}, ..., [boundInds, wrapInds]_{t} ])
-
-             nPops - the number of populations in subInds (Default=1)
              stride - skip every "stride" steps of the trajectory (int). Default=1
      Outputs:
              avgVol - estimate of the mean hydrated volume (Angstrom^3)
@@ -1156,13 +1164,20 @@ def hydratedVolumeCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:
   obj = TrajObject(topFile, trajFile, stride, solResName, watResName)
   top = obj.top #loadTop()
   traj = obj.traj #.loadTraj()
+  print(traj)
 
   # select water oxygen and hydrogen indices
-  watInds, watHInds, lenWat = obj.getWatInds()
+  watInds, watHInds, lenWat = obj.getWatInds()  
 
   # select cosolvent heavy
-  #solInds, solHInds, solCInds, solNInds, solOInds, solSInds = obj.getSolInds()
-  solInds, solHInds, _, _, _, _ = obj.getSolInds()
+  solInds, solHInds, solCInds, solOInds, solNInds, solSInds = obj.getSolInds()
+
+  # get number of solute heavy atoms residues
+  nSolAtoms = len(solInds)
+  nSols = traj[:1, solResName].topology.n_residues
+
+  # compute the number of atoms in a single solute residue
+  nResAtoms = int(nSolAtoms/nSols)
 
   # get all heavy indices
   heavyInds = np.concatenate((watInds,solInds))
@@ -1173,23 +1188,13 @@ def hydratedVolumeCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:
   # create mapping function from water index to heavyInds equivalent
   mapHeavy = {watInds[i]:i for i in range(len(watInds))}
 
-  # Create lists to store volume and area values.
-  molVol = [ [] for i in range((nPops+1)) ]
-
   # Lists to store mean and var. volume, area, and asphericity
-  avgVol = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
-  varVol = [ np.zeros(len(traj)) for i in range((nPops+1)) ]
+  solVol = []; solArea = []
+  avgVol = np.zeros(len(traj)); varVol = np.zeros(len(traj))
+  avgArea = np.zeros(len(traj)); varArea = np.zeros(len(traj))
 
   # loop through trajectory to compute average RDFs
   for t, frame in enumerate(traj):
-
-    if subInds is None:
-      inds = [ [ mapHeavy[ ind ] for ind in watInds ] ]
-    else:
-      # reorder and get subIndices for this frame
-      inds = [ [ mapHeavy[ subInds[t][i][j] ] 
-                 for j in range(len(subInds[t][i])) ] 
-               for i in range(nPops) ]
 
     # grab ith positions and box vectors
     thispos = np.array(frame.xyz)
@@ -1199,97 +1204,65 @@ def hydratedVolumeCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:
     thisOrdered = np.array(thispos[orderedInds])
 
     # get contact list with the non-water cosolvent
-    contacts, _, _, _ = sl.voronoi_contacts(thisHeavy, 
-                                            thisbox[0][0], len(solInds))
+    contacts, solA, watA, solV = sl.voronoi_contacts(thisOrdered, 
+                                                     thisbox[0][0], 
+                                                     len(solInds))
 
-    print(contacts)
-    print(contacts.shape)
-    print(np.sum(contacts))
-    stop
+    # compute solute self contact area
+    selfContacts = contacts[:len(solInds), :len(solInds)]
+    selfArea = np.sum(selfContacts.reshape(-1, len(solInds), nResAtoms), axis=2)
+    selfArea = np.sum(selfArea.reshape(-1, nResAtoms, nSols), axis=1)
+    selfArea = np.sum(selfArea, axis=0)
 
     # calculate the voronoi cell volumes
-    VV = voronoi_volumes(thisHeavy, thisbox[0,0], len(watInds))
-    Vol = VV[0][:len(watInds)]
-    Area = VV[1][:len(watInds)]
+    VV = voronoi_volumes(thisOrdered, thisbox[0,0], len(solInds))
+    Vol = VV[0][:len(solInds)]
+    Vol = np.sum(Vol.reshape(-1, nResAtoms), axis=1)
 
-    # get volume and area properties of all waters
-#    watVol[0].append( Vol[~np.isinf(Vol)] ); watArea[0].append( Area[~np.isinf(Area)] )
-#    watEta[0].append( Area[~np.isinf(Area)]**3.0/36.0/np.pi / 
-#                      Vol[~np.isinf(Vol)]**2.0 )
+    Area = VV[1][:len(solInds)]
+    Area = np.sum(Area.reshape(-1, nResAtoms), axis=1)
+    Area = Area - selfArea
 
-#    avgVol[0][t] = np.mean( Vol[~np.isinf(Vol)] ); varVol[0][t] = np.var( Vol[~np.isinf(Vol)] )
-#    avgArea[0][t] = np.mean( Area[~np.isinf(Area)] ); varArea[0][t] = np.var( Area[~np.isinf(Area)] )
-#    avgEta[0][t] = np.mean( Area[~np.isinf(Area)]**3.0/36.0/np.pi/Vol[~np.isinf(Vol)]**2.0 )
-#    varEta[0][t] = np.var( Area[~np.isinf(Area)]**3.0/36.0/np.pi/Vol[~np.isinf(Vol)]**2.0 )
-
-    # loop through subPositions
-#    for j in range(1, (nPops+1)):
-#      watVol[j].append( Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])] )
-#      watArea[j].append( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])] )
-#      watEta[j].append( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])]**3.0/36.0/np.pi / 
-#                        Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])]**2.0 )
-
-#      avgVol[j][t] = np.mean( Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])] )
-#      varVol[j][t] = np.var( Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])] )
-
-#      avgArea[j][t] = np.mean( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])] )
-#      varArea[j][t] = np.var( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])] )
+    # get volume and area properties of co-solvent
+    solVol.append( Vol[~np.isinf(Vol)] )
+    solArea.append( Area[~np.isinf(Area)] )
+    
+    # get statistics for this time step
+    avgVol[t] = np.mean( Vol[~np.isinf(Vol)] )
+    varVol[t] = np.var( Vol[~np.isinf(Vol)] )
+    avgArea[t] = np.mean( Area[~np.isinf(Area)] )
+    varArea[t] = np.var( Area[~np.isinf(Area)] )
       
-#      avgEta[j][t] = np.mean( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])]**3.0/36.0/np.pi / 
-#                              Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])]**2.0 )
-#      varEta[j][t] = np.var( Area[inds[j-1]][~np.isinf(Area[inds[j-1]])]**3.0/36.0/np.pi /
-#                             Vol[inds[j-1]][~np.isinf(Vol[inds[j-1]])]**2.0 ) 
-
-      
-  # estimate simulation average and CIs using block averaging
-#  avgVol_mean = np.zeros((nPops+1)); avgVol_CI = np.zeros((nPops+1))
-#  varVol_mean = np.zeros((nPops+1)); varVol_CI = np.zeros((nPops+1))
-#  avgArea_mean = np.zeros((nPops+1)); avgArea_CI = np.zeros((nPops+1))
-#  varArea_mean = np.zeros((nPops+1)); varArea_CI = np.zeros((nPops+1))
-#  avgEta_mean = np.zeros((nPops+1)); avgEta_CI = np.zeros((nPops+1))
-#  varEta_mean = np.zeros((nPops+1)); varEta_CI = np.zeros((nPops+1))
  
-#  for j in range((nPops+1)):
-#    avgVol_CI[j] = blockAverage(avgVol[j][:]); avgVol_mean[j] = np.mean(avgVol[j][:])
-#    varVol_CI[j] = blockAverage(varVol[j][:]); varVol_mean[j] = np.mean(varVol[j][:])
-#    avgArea_CI[j] = blockAverage(avgArea[j][:]); avgArea_mean[j] = np.mean(avgArea[j][:])
-#    varArea_CI[j] = blockAverage(varArea[j][:]); varArea_mean[j] = np.mean(varArea[j][:])
-#    avgEta_CI[j] = blockAverage(avgEta[j][:]); avgEta_mean[j] = np.mean(avgEta[j][:])
-#    varEta_CI[j] = blockAverage(varEta[j][:]); varEta_mean[j] = np.mean(varEta[j][:])
-
-#    VolDist, bins = np.histogram(np.concatenate(watVol[j]), bins=500,
+  avgVol_CI = blockAverage(avgVol); avgVol_mean = np.mean(avgVol)
+  varVol_CI = blockAverage(varVol); varVol_mean = np.mean(varVol)
+  avgArea_CI = blockAverage(avgArea); avgArea_mean = np.mean(avgArea)
+  varArea_CI = blockAverage(varArea); varArea_mean = np.mean(varArea)
+  
+  # save distributions
+  VolDist, bins = np.histogram(np.concatenate(solVol), bins=500,
 #                                 range=[10.0, 60.0],
-#                                 density=False)
+                                 density=False)
 
-    # save the file!                                                            
-#    np.savetxt('VolDistribution_'+str(j)+'.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
-#                                                           VolDist],axis=1),
-#               header='water volume (A^3)    frequency',fmt="%.3e")
+  # save the file!                                                            
+  np.savetxt('solVolDistribution.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
+                                                            VolDist],axis=1),
+             header='solute volume (A^3)    frequency',fmt="%.3e")
     
-#    AreaDist, bins = np.histogram(np.concatenate(watArea[j]), bins=500,
-#                                  range=[10.0, 100.0],
-#                                  density=False)
+  AreaDist, bins = np.histogram(np.concatenate(solArea), bins=500,
+                                #range=[10.0, 100.0],
+                                density=False)
                                                  
-    # save the file!                                                            
-#    np.savetxt('AreaDistribution_'+str(j)+'.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
-#                                                            AreaDist],axis=1),
-#               header='water area (A^2)    frequency',fmt="%.3e")
+  # save the file!                                                            
+  np.savetxt('solAreaDistribution.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
+                                                  AreaDist],axis=1),
+             header='solute area (A^2)    frequency',fmt="%.3e")
     
-#    EtaDist, bins = np.histogram(np.concatenate(watEta[j]), bins=500,
-#                                 range=[1.00, 2.5],
-#                                 density=False)
 
-    # save the file!                                                           
-#    np.savetxt('EtaDistribution_'+str(j)+'.txt', np.stack([0.5*(bins[:-1]+bins[1:]),
-#                                                           EtaDist],axis=1),
-#               header='asphericity    frequency',fmt="%.3e")
+  avgVol = [avgVol_mean, avgVol_CI]; varVol = [varVol_mean, varVol_CI]
+  avgArea = [avgArea_mean, avgArea_CI]; varArea = [varArea_mean, varArea_CI]
 
-
-#  avgVol = [avgVol_mean, avgVol_CI]; varVol = [varVol_mean, varVol_CI]
-#  avgArea = [avgArea_mean, avgArea_CI]; varArea = [varArea_mean, varArea_CI]
-#  avgEta = [avgEta_mean, avgEta_CI]; varEta = [varEta_mean, varEta_CI]
-
-  return 0
+  return avgVol, varVol, avgArea, varArea
 
 def threeBodyCalc(topFile, trajFile, subInds=None, nPops=0, solResName='(!:WAT)', watResName='(:WAT)', nBins=500, stride=1, output2D=False):
   """Given a topology file and trajectory (or a list of) file, computes the three-body angle distribution for the system-aveage and for as specific population (i.e. hydration shell, bound, or wrap)

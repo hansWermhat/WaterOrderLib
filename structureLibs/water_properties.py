@@ -6,21 +6,20 @@ from platform import python_version
 import numpy as np
 import scipy.optimize as optimize
 from scipy.special import sph_harm
+from pathlib import Path
 
 Usage = 'A library of code to examine properties of bulk water and near solutes'
 
 # check if wrapper version is consistent with current python version
 pyVersion = python_version().split('.')[0] + python_version().split('.')[1]
 
-os.chdir('../fortran') # change to fortran directory
-libFileName = glob.glob('*.so')
+# get directories
+rootDir = os.getcwd()
+structDir = Path(__file__).resolve().parent.parent
+fortranDir = str(structDir) + '/fortran'
 
-# First check that there are wrappers for each function. If not, run subproc.
-#if len(libFileName)<=3:
-#  print('Writing fortran wrappers...')
-#  for f in libFileName:
-#    os.remove(f)
-#  subprocess.run(['bash buildWrappers.sh'], shell=True)
+os.chdir(fortranDir) # change to fortran directory
+libFileName = glob.glob('*.so')
 
 # Then check that each wrapper uses the same python 3.X version. If not, run subproc.
 nWrappers = 3 # change this parameter if I add more fortran scripts
@@ -28,7 +27,6 @@ count = 0
 for f in libFileName:
   if pyVersion in f:
     count += 1
-print(count)
 
 if count<nWrappers:
   print('Writing fortran wrappers...')
@@ -37,9 +35,9 @@ if count<nWrappers:
   subprocess.call(['bash buildWrappers.sh'], shell=True)
 else:
   pass
-os.chdir('../structureLibs')
 
-sys.path.append('../fortran')       
+os.chdir(rootDir)
+sys.path.append(fortranDir)       
 import waterlib as wl         
 
 #Define constants and unit conversions
